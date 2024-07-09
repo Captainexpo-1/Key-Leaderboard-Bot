@@ -1,4 +1,4 @@
-const dataManager = require('./data/datamanager.js');
+const dataManager = require('./datamanager.js');
 const { App } = require('@slack/bolt');
 const express = require('express');
 
@@ -18,18 +18,25 @@ const app = new App({
 
 function getUserData(user) {
     if (!dataManager.recordExists(user["id"])) {
-        dataManager.addRecord(user["id"], { "found": 0, "username": user["name"], "id": user["id"]});
+        dataManager.addRecord(user["id"], { "found": 0, "msghashes": [], "username": user["name"], "id": user["id"]});
     }
     return dataManager.getRecord(user["id"]);
 }
 
-async function foundKey(user, say){
+async function foundKey(user, say, hash) {
     let record = getUserData(user)
     console.log("Record: ", record)
+    const msgHashes = record["msghashes"];
+    if (msgHashes.includes(hash)) {
+        await say("You have already found this key!");
+        return;
+    }
     let numKeysFound = record["found"];
-    await say(`Awesome! You have found ${numKeysFound} keys.`);
     numKeysFound++;
-    dataManager.updateRecord(user["id"], { "found": numKeysFound, "username": user["name"], "id": user["id"]});
+    await say(`Awesome! You have found ${numKeysFound} keys.`);
+
+    msgHashes.push(hash);
+    dataManager.updateRecord(user["id"], { "found": numKeysFound, "msghashes": msgHashes, "username": user["name"], "id": user["id"]});
 }
 app.event('app_mention', async ({ event, say }) => {
     try{
@@ -37,8 +44,15 @@ app.event('app_mention', async ({ event, say }) => {
         const userInfo = await app.client.users.info({ user: userID });
         const username = userInfo.user.name;
         if (event.text.toLowerCase().includes('i found a key!')) {
-
-            await foundKey({'id': userID, 'name': username}, say); 
+            const linkRegex = /https:\/\/\w+\.slack\.com\/archives\/\w+\/\w\d{16}/
+            const link = event.text.match(linkRegex);
+            if(!link){
+                await say("Please provide a valid link");
+                return;
+            }
+            const hash = createHash('sha256').update(link[0]).digest('base64');
+            console.log("Hash: ", hash);
+            await foundKey({'id': userID, 'name': username}, say, hash); 
         }
         else if (event.text.toLowerCase().includes('leaderboard please!')){
             dataManager.backupAllRecords();
@@ -56,11 +70,11 @@ app.event('app_mention', async ({ event, say }) => {
             await say("To report a found key, mention me and say 'I found a key!'.\n To see the leaderboard, mention me and say 'Leaderboard please!'\nTo see this message, mention me and say 'help'");
         } else if (event.text.toLowerCase().includes('i exist!')){
             if(!dataManager.recordExists(userID)){
-                await say(`<@${userID}> now exists! :)`);
+                await say(`<@${userID}> has been added to the leaderboard :)`);
                 dataManager.addRecord(userID, { "found": 0, "username": username, "id": userID});
             }
             else {
-                await say(`<@${userID}> already exists!`);
+                await say(`@<${userID}> is already on the laderboard!`);
             }
         }
     }
